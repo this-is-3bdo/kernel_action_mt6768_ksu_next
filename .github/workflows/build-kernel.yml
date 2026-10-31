@@ -272,9 +272,7 @@ jobs:
 
         sed -i 's/if ((id == 1) || (id == 6) || (id == 8))/if ((i2c->id == 1) || (i2c->id == 6) || (i2c->id == 8))/g' drivers/i2c/busses/i2c-mtk.c
 
-        echo "CONFIG_KSU=y" >> arch/arm64/configs/${DEVICE}_defconfig
-        echo "# CONFIG_KPROBES is not set" >> arch/arm64/configs/${DEVICE}_defconfig        if [ ${{ env.USE_GCC }} = true ]; then
-        
+
             if [ ${{ env.USE_GCC_64 }} = true ]; then
                 export PATH=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$PATH
             fi
