@@ -96,6 +96,22 @@ jobs:
     - name: Setup Configuration for kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+        # Disable 32-bit vDSO
+        sed -i 's/CONFIG_COMPAT_VDSO=y/# CONFIG_COMPAT_VDSO is not set/g' arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        echo "# CONFIG_COMPAT_VDSO is not set" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+
+        # Lock vermagic to match /vendor modules
+        sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/g' arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        echo "# CONFIG_LOCALVERSION_AUTO is not set" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-openela-proton-g58eaf531fae9"/g' arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        echo 'CONFIG_LOCALVERSION="-openela-proton-g58eaf531fae9"' >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+
+        # Eliminate -dirty tag
+        echo '#!/bin/sh' > scripts/setlocalversion
+        echo 'echo "-openela-proton-g58eaf531fae9"' >> scripts/setlocalversion
+        chmod +x scripts/setlocalversion
+
         if [ "${{ env.ENABLE_KERNELSU }}" = "true" ]; then
             echo "CONFIG_KSU=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
@@ -106,9 +122,6 @@ jobs:
             echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
             echo "CONFIG_OVERLAY_FS_INDEX=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
         fi
-        
-        sed -i 's/CONFIG_COMPAT_VDSO=y/# CONFIG_COMPAT_VDSO is not set/g' arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
-        echo "# CONFIG_COMPAT_VDSO is not set" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
 
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
@@ -144,33 +157,33 @@ jobs:
                 f.write(content)
             print(f"[OK] Patched {filepath}")
 
-        # Hook 1: fs/exec.c - placed safely inside do_execveat_common body after {
+        # Hook 1: fs/exec.c
         patch_after_brace('fs/exec.c',
             'static int do_execveat_common(',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n#endif')
 
-        # Hook 2: fs/open.c - inside do_faccessat body after {
+        # Hook 2: fs/open.c
         patch_after_brace('fs/open.c',
             'long do_faccessat(',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\nksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif')
 
-        # Hook 3: fs/read_write.c - inside vfs_read body after {
+        # Hook 3: fs/read_write.c
         patch_after_brace('fs/read_write.c',
             'ssize_t vfs_read(',
             '#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\nif (unlikely(ksu_vfs_read_hook)) ksu_handle_sys_read(0, &buf, &count);\n#endif')
 
-        # Hook 4: fs/stat.c - inside vfs_fstatat body after {
+        # Hook 4: fs/stat.c
         patch_after_brace('fs/stat.c',
             'int vfs_fstatat(',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\nksu_handle_stat(&dfd, &filename, &flag);\n#endif')
 
-        # Hook 5: kernel/reboot.c - inside SYSCALL_DEFINE4(reboot...) body after {
+        # Hook 5: kernel/reboot.c
         patch_after_brace('kernel/reboot.c',
             'SYSCALL_DEFINE4(reboot,',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\nksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif')
         EOF
         fi
-        
+
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
@@ -199,6 +212,16 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone ${{ env.ANYKERNEL3_SOURCE }} -b ${{ env.ANYKERNEL3_BRANCH }} --depth=1 AnyKernel3
         cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+
+        # Copy matching compiled DTB for Header Version 2 boot images
+        if [ -f android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dtb ]; then
+            cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dtb AnyKernel3/dtb
+        elif [ -f android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dts/mediatek/mt6768.dtb ]; then
+            cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dts/mediatek/mt6768.dtb AnyKernel3/dtb
+        else
+            find android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/ -name "*6768*.dtb" -o -name "*${DEVICE}*.dtb" -o -name "*.dtb" | head -n 1 | xargs -I{} cp {} AnyKernel3/dtb
+        fi
+
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
     - name: Upload AnyKernel3
