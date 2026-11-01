@@ -121,7 +121,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # Inject KernelSU manual hooks
+        # Inject KernelSU manual hooks cleanly inside function bodies
         if [ "${{ env.ENABLE_KERNELSU }}" = "true" ]; then
           python3 - << 'EOF'
         import sys
@@ -137,13 +137,32 @@ jobs:
                     f.write(c)
                 print(f"[OK] Patched {filepath}")
             else:
-                print(f"[WARN] Anchor not found in {filepath}, skipping")
+                print(f"[WARN] Anchor not found in {filepath}")
 
-        insert_after('fs/exec.c', 'int do_execve(struct filename *filename,', '#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);\n#endif\n')
-        insert_after('fs/open.c', 'long do_faccessat(int dfd, const char __user *filename, int mode)', '#ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\nksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n')
-        insert_after('fs/read_write.c', 'ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)', '#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\nif (unlikely(ksu_vfs_read_hook)) ksu_handle_sys_read(0, &buf, &count);\n#endif\n')
-        insert_after('fs/stat.c', 'int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,', '#ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\nksu_handle_stat(&dfd, &filename, &flag);\n#endif\n')
-        insert_after('kernel/reboot.c', 'SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,', '#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\nksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif\n')
+        # Hook 1: fs/exec.c - inside do_execve() body
+        insert_after('fs/exec.c',
+            'static int do_execveat_common(int fd, struct filename *filename,',
+            '#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);\n#endif')
+
+        # Hook 2: fs/open.c - inside do_faccessat() body
+        insert_after('fs/open.c',
+            'long do_faccessat(int dfd, const char __user *filename, int mode)\n{',
+            '#ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\nksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif')
+
+        # Hook 3: fs/read_write.c - inside vfs_read() body
+        insert_after('fs/read_write.c',
+            'ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)\n{',
+            '#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\nif (unlikely(ksu_vfs_read_hook)) ksu_handle_sys_read(0, &buf, &count);\n#endif')
+
+        # Hook 4: fs/stat.c - inside vfs_fstatat() body
+        insert_after('fs/stat.c',
+            'int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,\n\t\tint flag)\n{',
+            '#ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\nksu_handle_stat(&dfd, &filename, &flag);\n#endif')
+
+        # Hook 5: kernel/reboot.c - inside SYSCALL_DEFINE4(reboot...) body after the opening brace
+        insert_after('kernel/reboot.c',
+            'void __user *, arg)\n{',
+            '#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\nksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif')
         EOF
         fi
 
