@@ -37,10 +37,10 @@ jobs:
       run: |
         grep -v -E "^#|^\n" config.env | sed 's/ #.*//; s/#.*//' >> $GITHUB_ENV
 
-    - name: Set swap to 10G
+    - name: Set swap to 4G
       uses: pierotofy/set-swap-space@master
       with:
-        swap-size-gb: 10
+        swap-size-gb: 4
 
     - name: Setup kernel build environment
       run: |
