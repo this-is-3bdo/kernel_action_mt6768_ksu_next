@@ -126,46 +126,51 @@ jobs:
           python3 - << 'EOF'
         import sys
 
-        def insert_after(filepath, anchor, code):
+        def patch_after_brace(filepath, func_anchor, code):
             with open(filepath, 'r') as f:
-                c = f.read()
-            if code.strip() in c:
+                content = f.read()
+            if code.strip() in content:
                 return
-            if anchor in c:
-                c = c.replace(anchor, anchor + "\n" + code, 1)
-                with open(filepath, 'w') as f:
-                    f.write(c)
-                print(f"[OK] Patched {filepath}")
-            else:
-                print(f"[WARN] Anchor not found in {filepath}")
+            idx = content.find(func_anchor)
+            if idx == -1:
+                print(f"[WARN] {func_anchor} not found in {filepath}")
+                return
+            brace_idx = content.find('{', idx)
+            if brace_idx == -1:
+                print(f"[WARN] Opening brace not found after {func_anchor} in {filepath}")
+                return
+            content = content[:brace_idx + 1] + "\n" + code + "\n" + content[brace_idx + 1:]
+            with open(filepath, 'w') as f:
+                f.write(content)
+            print(f"[OK] Patched {filepath}")
 
-        # Hook 1: fs/exec.c - inside do_execve() body
-        insert_after('fs/exec.c',
-            'static int do_execveat_common(int fd, struct filename *filename,',
-            '#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);\n#endif')
+        # Hook 1: fs/exec.c - placed safely inside do_execveat_common body after {
+        patch_after_brace('fs/exec.c',
+            'static int do_execveat_common(',
+            '#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n#endif')
 
-        # Hook 2: fs/open.c - inside do_faccessat() body
-        insert_after('fs/open.c',
-            'long do_faccessat(int dfd, const char __user *filename, int mode)\n{',
+        # Hook 2: fs/open.c - inside do_faccessat body after {
+        patch_after_brace('fs/open.c',
+            'long do_faccessat(',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\nksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif')
 
-        # Hook 3: fs/read_write.c - inside vfs_read() body
-        insert_after('fs/read_write.c',
-            'ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)\n{',
+        # Hook 3: fs/read_write.c - inside vfs_read body after {
+        patch_after_brace('fs/read_write.c',
+            'ssize_t vfs_read(',
             '#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\nif (unlikely(ksu_vfs_read_hook)) ksu_handle_sys_read(0, &buf, &count);\n#endif')
 
-        # Hook 4: fs/stat.c - inside vfs_fstatat() body
-        insert_after('fs/stat.c',
-            'int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,\n\t\tint flag)\n{',
+        # Hook 4: fs/stat.c - inside vfs_fstatat body after {
+        patch_after_brace('fs/stat.c',
+            'int vfs_fstatat(',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\nksu_handle_stat(&dfd, &filename, &flag);\n#endif')
 
-        # Hook 5: kernel/reboot.c - inside SYSCALL_DEFINE4(reboot...) body after the opening brace
-        insert_after('kernel/reboot.c',
-            'void __user *, arg)\n{',
+        # Hook 5: kernel/reboot.c - inside SYSCALL_DEFINE4(reboot...) body after {
+        patch_after_brace('kernel/reboot.c',
+            'SYSCALL_DEFINE4(reboot,',
             '#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\nksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif')
         EOF
         fi
-
+        
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
