@@ -123,6 +123,11 @@ jobs:
             echo "CONFIG_OVERLAY_FS_INDEX=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
         fi
 
+        # Match stock LTO optimization to prevent vendor module ABI panic
+        echo "CONFIG_LTO=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        echo "CONFIG_LTO_CLANG=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+        echo "CONFIG_THINLTO=y" >> arch/${{ env.KERNEL_ARCH }}/configs/${DEVICE}_defconfig
+
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
       uses: hendrikmuhs/ccache-action@v1.2
@@ -221,6 +226,10 @@ jobs:
         else
             find android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/ -name "*6768*.dtb" -o -name "*${DEVICE}*.dtb" -o -name "*.dtb" | head -n 1 | xargs -I{} cp {} AnyKernel3/dtb
         fi
+
+        # Pack any compiled kernel modules to replace the stock vendor modules
+        mkdir -p AnyKernel3/modules/vendor/lib/modules
+        find android-kernel/out/ -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
 
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
