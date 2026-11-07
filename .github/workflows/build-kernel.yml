@@ -198,8 +198,9 @@ jobs:
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
 
-        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.KERNEL_ARCH }} ${{ env.EXTRA_CMDS }} ${DEVICE}_defconfig
-        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.KERNEL_ARCH }} ${{ env.EXTRA_CMDS }}
+        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.KERNEL_ARCH }} ${{ env.EXTRA_CMDS }} ${DEVICE}_defconfig 2>&1 | tee defconfig.log
+        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.KERNEL_ARCH }} ${{ env.EXTRA_CMDS }} 2>&1 | tee build.log
+        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.KERNEL_ARCH }} ${{ env.EXTRA_CMDS }} INSTALL_MOD_PATH=$GITHUB_WORKSPACE/kernel_workspace/out_modules modules_install 2>&1 | tee modules.log
 
     - name: Check a kernel output files
       run: |
@@ -225,10 +226,14 @@ jobs:
             cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dts/mediatek/mt6768.dtb AnyKernel3/dtb
         fi
 
-        # Find all compiled kernel modules (.ko) and package them into the zip
+        # Find all compiled kernel modules (.ko) from the install path and package them
         mkdir -p AnyKernel3/modules/vendor/lib/modules
         mkdir -p AnyKernel3/modules/system/lib/modules
-        find android-kernel/out/ -type f -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
+        if [ -d $GITHUB_WORKSPACE/kernel_workspace/out_modules/lib/modules ]; then
+            find $GITHUB_WORKSPACE/kernel_workspace/out_modules/lib/modules -type f -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
+        else
+            echo "[WARNING] No modules generated in out_modules!"
+        fi
         
         # Clean up AnyKernel3 repo files
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
@@ -239,3 +244,13 @@ jobs:
       with:
         name: AnyKernel3${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
         path: kernel_workspace/AnyKernel3/*
+
+    - name: Upload Build Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Logs-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
+        path: |
+          kernel_workspace/android-kernel/defconfig.log
+          kernel_workspace/android-kernel/build.log
+          kernel_workspace/android-kernel/modules.log
