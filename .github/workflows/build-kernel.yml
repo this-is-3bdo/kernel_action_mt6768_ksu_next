@@ -218,19 +218,19 @@ jobs:
         git clone ${{ env.ANYKERNEL3_SOURCE }} -b ${{ env.ANYKERNEL3_BRANCH }} --depth=1 AnyKernel3
         cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
 
-        # Copy matching compiled DTB for Header Version 2 boot images
+        # Copy matching compiled standalone DTB for Header v2
         if [ -f android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dtb ]; then
             cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dtb AnyKernel3/dtb
         elif [ -f android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dts/mediatek/mt6768.dtb ]; then
             cp android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/dts/mediatek/mt6768.dtb AnyKernel3/dtb
-        else
-            find android-kernel/out/arch/${{ env.KERNEL_ARCH }}/boot/ -name "*6768*.dtb" -o -name "*${DEVICE}*.dtb" -o -name "*.dtb" | head -n 1 | xargs -I{} cp {} AnyKernel3/dtb
         fi
 
-        # Pack any compiled kernel modules to replace the stock vendor modules
+        # Find all compiled kernel modules (.ko) and package them into the zip
         mkdir -p AnyKernel3/modules/vendor/lib/modules
-        find android-kernel/out/ -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
-
+        mkdir -p AnyKernel3/modules/system/lib/modules
+        find android-kernel/out/ -type f -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
+        
+        # Clean up AnyKernel3 repo files
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
     - name: Upload AnyKernel3
